@@ -1,0 +1,122 @@
+tosca_definitions_version: cloudify_dsl_1_3
+#
+# Copyright 2018 AT&T Intellectual Property, Inc
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+#  What this is: Cloudify blueprint for running a zookeeper service for OPNFV VES
+#  under kubernetes.
+
+imports:
+  - http://www.getcloudify.org/spec/cloudify/3.4/types.yaml
+  - https://raw.githubusercontent.com/cloudify-incubator/cloudify-kubernetes-plugin/1.2.1/plugin.yaml
+
+inputs:
+
+  spec_port:
+    default: 2181
+
+  container_port:
+    default: 2181
+
+  kubernetes_configuration_file_content:
+    default: kube.config
+
+  kubernetes_master_ip:
+    type: string
+    default: { get_secret: kubernetes_master_ip }
+
+  kubernetes_master_port:
+    type: string
+    default: { get_secret: kubernetes_master_port }
+
+  kubernetes_certificate_authority_data:
+    default: { get_secret: kubernetes_certificate_authority_data }
+
+  kubernetes-admin_client_certificate_data:
+    default: { get_secret: kubernetes-admin_client_certificate_data }
+
+  kubernetes-admin_client_key_data:
+    default: { get_secret: kubernetes-admin_client_key_data }
+
+  kubernetes_master_configuration:
+    default:
+      apiVersion: v1
+      kind: Config
+      preferences: {}
+      current-context: kubernetes-admin@kubernetes
+      clusters:
+      - name: kubernetes
+        cluster:
+          certificate-authority-data: { get_input: kubernetes_certificate_authority_data }
+          server: { concat: [ 'https://', { get_input: kubernetes_master_ip}, ':', { get_input: kubernetes_master_port } ] }
+      contexts:
+      - name: kubernetes-admin@kubernetes
+        context:
+          cluster: kubernetes
+          user: kubernetes-admin
+      users:
+      - name: kubernetes-admin
+        user:
+          client-certificate-data: { get_input: kubernetes-admin_client_certificate_data }
+          client-key-data:  { get_input: kubernetes-admin_client_key_data }
+
+  kubernetes_configuration_file_content:
+    description: >
+      File content of kubernetes master YAML configuration
+    default: { get_input: kubernetes_master_configuration }
+
+node_templates:
+  kubernetes_master:
+    type: cloudify.kubernetes.nodes.Master
+    properties:
+      configuration:
+        file_content: { get_input: kubernetes_configuration_file_content }
+
+  ves_zookeeper_service:
+    type: cloudify.kubernetes.resources.Service
+    properties:
+      definition:
+        apiVersion: v1
+        metadata:
+          name: ves-zookeeper-service
+        spec:
+          ports:
+          - port: { get_input: spec_port }
+          selector:
+            app: ves-zookeeper
+    relationships:
+      - type: cloudify.kubernetes.relationships.managed_by_master
+        target: kubernetes_master
+      - type: cloudify.relationships.depends_on
+        target: ves_zookeeper_pod
+
+  ves_zookeeper_pod:
+    type: cloudify.kubernetes.resources.Pod
+    properties:
+      definition:
+        apiVersion: v1
+        metadata:
+          name: ves-zookeeper-pod
+          labels:
+            app: ves-zookeeper
+        spec:
+          containers:
+          - name: ves-zookeeper
+            image: zookeeper
+            env:
+            ports:
+            - containerPort: { get_input: container_port }
+    relationships:
+      - type: cloudify.kubernetes.relationships.managed_by_master
+        target: kubernetes_master
